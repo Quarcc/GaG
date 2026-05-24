@@ -2,8 +2,8 @@
 🌱 Grow a Garden — Telegram Notification Bot
 =============================================
 Sends a separate Telegram message per shop section each time
-that section's restock timer expires. Each message includes
-the full stock list and time until the next restock.
+that section's restock timer expires. Also monitors weather
+and alerts when a new weather event appears.
 
 SETUP
 -----
@@ -59,28 +59,53 @@ EXCLUDED_EVENT_KEYWORDS = [
 URL            = "https://www.growagardenstocknow.com/"
 BUFFER_SECONDS = 5
 FALLBACK_POLL  = 300
+WEATHER_POLL   = 60   # check weather every 60s
 TZ_SGT         = timezone(timedelta(hours=8))  # GMT+8
 
+# Seeds are now ONE combined message, split internally by header
 SECTION_TIMESTAMP_MAP = {
-    "Seeds Stock — Daily Deals": "seeds",
-    "Seeds Stock — Shop":        "seeds",
-    "Gear Stock":                "gear",
-    "Egg Stock":                 "egg",
-    "Event Stock":               "event",
-    "Merchant Stock":            "merchant",
+    "Seeds Stock":   "seeds",
+    "Gear Stock":    "gear",
+    "Egg Stock":     "egg",
+    "Event Stock":   "event",
+    "Merchant Stock":"merchant",
 }
 
 SECTION_EMOJI = {
-    "Seeds Stock — Daily Deals": "💥",
-    "Seeds Stock — Shop":        "🌱",
-    "Gear Stock":                "🛠️",
-    "Egg Stock":                 "🥚",
-    "Event Stock":               "🎪",
-    "Merchant Stock":            "🛒",
+    "Seeds Stock":    "🌱",
+    "Gear Stock":     "🛠️",
+    "Egg Stock":      "🥚",
+    "Event Stock":    "🎪",
+    "Merchant Stock": "🛒",
 }
+
+WEATHER_EMOJI = {
+    "gentledrizzle":  "🌦️",
+    "rain":           "🌧️",
+    "thunderstorm":   "⛈️",
+    "sunshower":      "🌈",
+    "bloodmoon":      "🌕",
+    "jelly":          "🪼",
+    "meteor":         "☄️",
+    "windy":          "🌬️",
+    "frost":          "❄️",
+    "fog":            "🌫️",
+    "heatwave":       "🌡️",
+    "snow":           "🌨️",
+    "sandstorm":      "🌪️",
+}
+
+def get_weather_emoji(name: str) -> str:
+    key = name.lower().replace(" ", "")
+    for k, v in WEATHER_EMOJI.items():
+        if k in key:
+            return v
+    return "🌤️"
 
 # ─── STATE ────────────────────────────────────────────────────
 section_state: dict[str, dict] = {}
+last_weather_names: set[str]   = set()   # tracks active weathers
+last_weather_poll:  float       = 0.0
 
 # ─── TELEGRAM ─────────────────────────────────────────────────
 
@@ -127,18 +152,66 @@ def parse_restock_timestamps(html: str) -> dict[str, int]:
     }
 
 
+def parse_weather(html: str) -> list[dict]:
+    """
+    Parses weather entries from the Weather Info section.
+    Each entry: { name, countdown }
+    Looks for div[id^="weather_"] containing the name span and countdown span.
+    Skips entries where countdown text is "ended".
+    """
+    soup    = BeautifulSoup(html, "html.parser")
+    weathers = []
+
+    section = soup.find("section", attrs={"aria-label": "Weather Info"})
+    if not section:
+        return weathers
+
+    # Each weather row: <div id="weather_1" ...>
+    for div in section.find_all("div", id=re.compile(r"^weather_\d+$")):
+        # Name is the last <span> directly in this div (after the dot span)
+        spans = div.find_all("span", recursive=False)
+        name  = None
+        for span in spans:
+            text = span.get_text(strip=True)
+            if text and text != "●":
+                name = text
+                break
+
+        # Fallback: any span that isn't the dot
+        if not name:
+            for span in div.find_all("span"):
+                text = span.get_text(strip=True)
+                if text and text != "●":
+                    name = text
+                    break
+
+        if not name:
+            continue
+
+        # Countdown: <span id="weather_countdown_N">
+        idx           = div["id"].split("_")[-1]
+        countdown_tag = section.find("span", id=f"weather_countdown_{idx}")
+        countdown     = countdown_tag.get_text(strip=True) if countdown_tag else ""
+
+        # Skip ended weathers
+        if "ended" in countdown.lower():
+            continue
+
+        weathers.append({"name": name, "countdown": countdown})
+
+    return weathers
+
+
 def is_excluded_event_item(name: str) -> bool:
     name_lower = name.lower()
     return any(kw in name_lower for kw in EXCLUDED_EVENT_KEYWORDS)
 
 
-def parse_stock(html: str) -> dict[str, list[dict]]:
+def parse_stock(html: str) -> dict[str, list | dict]:
     """
-    Returns stock dict. Seeds Stock is split into two keys:
-      "Seeds Stock — Daily Deals"
-      "Seeds Stock — Shop"
-    Event items matching excluded keywords are dropped.
-    Items in EXCLUDED_ITEMS are dropped globally.
+    Returns stock dict.
+    Seeds Stock value is a dict: {"Daily Deals": [...], "Shop": [...]}
+    All other sections return a plain list.
     """
     soup   = BeautifulSoup(html, "html.parser")
     result = {}
@@ -148,19 +221,16 @@ def parse_stock(html: str) -> dict[str, list[dict]]:
 
         # ── Seeds Stock: split by h3 subheaders ──────────────
         if section == "Seeds Stock":
+            sub_items: dict[str, list] = {"Daily Deals": [], "Shop": []}
             current_sub = None
-            sub_items: dict[str, list] = {
-                "Seeds Stock — Daily Deals": [],
-                "Seeds Stock — Shop":        [],
-            }
 
             for tag in article.find_all(["h3", "li"]):
                 if tag.name == "h3":
                     label = tag.get_text(strip=True).lower()
                     if "daily" in label:
-                        current_sub = "Seeds Stock — Daily Deals"
+                        current_sub = "Daily Deals"
                     elif "shop" in label:
-                        current_sub = "Seeds Stock — Shop"
+                        current_sub = "Shop"
                     else:
                         current_sub = None
                     continue
@@ -187,8 +257,7 @@ def parse_stock(html: str) -> dict[str, list[dict]]:
                             qty = 1
                     sub_items[current_sub].append({"name": name, "qty": qty})
 
-            for key, items in sub_items.items():
-                result[key] = items
+            result[section] = sub_items
             continue
 
         # ── All other sections ────────────────────────────────
@@ -234,13 +303,21 @@ def format_time_until(ts: int) -> str:
 
 
 def now_sgt() -> str:
-    """Current time formatted in GMT+8."""
     return datetime.now(TZ_SGT).strftime("%H:%M")
+
+
+def build_item_lines(items: list[dict], watched: list[str]) -> list[str]:
+    """Returns formatted item lines with ⭐ for watched."""
+    lines = []
+    for i in items:
+        marker = "⭐" if any(w.lower() == i["name"].lower() for w in watched) else "  "
+        lines.append(f"   {marker} {i['name']}  ×{i['qty']}")
+    return lines
 
 
 def build_section_message(
     section: str,
-    items: list[dict],
+    stock_value,           # list[dict] or dict{"Daily Deals":[], "Shop":[]}
     watched: list[str],
     next_restock_ts: int | None,
 ) -> str:
@@ -251,45 +328,105 @@ def build_section_message(
     lines.append(f"{emoji} <b>{section}</b> — restocked at {now_sgt()} (GMT+8)")
     lines.append(f"⏱ Next restock in: <b>{next_str}</b>")
 
-    watched_hits = [
-        i for i in items
-        if any(w.lower() == i["name"].lower() for w in watched)
-    ]
-    if watched_hits:
-        lines.append("")
-        lines.append("✨ <b>Watched items in stock:</b>")
-        for i in watched_hits:
-            lines.append(f"   • {i['name']}  ×{i['qty']}")
+    # ── Seeds: combined message with two subsections ──────────
+    if isinstance(stock_value, dict):
+        all_items = stock_value.get("Daily Deals", []) + stock_value.get("Shop", [])
 
-    if items:
+        # Watched hits across both subsections
+        watched_hits = [
+            i for i in all_items
+            if any(w.lower() == i["name"].lower() for w in watched)
+        ]
+        if watched_hits:
+            lines.append("")
+            lines.append("✨ <b>Watched items in stock:</b>")
+            for i in watched_hits:
+                lines.append(f"   • {i['name']}  ×{i['qty']}")
+
+        # Daily Deals subsection
+        daily = stock_value.get("Daily Deals", [])
+        lines.append("")
+        lines.append("💥 <b>Daily Deals:</b>")
+        if daily:
+            lines.extend(build_item_lines(daily, watched))
+        else:
+            lines.append("   <i>(none)</i>")
+
+        # Shop subsection
+        shop = stock_value.get("Shop", [])
+        lines.append("")
+        lines.append("🏪 <b>Shop:</b>")
+        if shop:
+            lines.extend(build_item_lines(shop, watched))
+        else:
+            lines.append("   <i>(none)</i>")
+
+    # ── All other sections: flat list ─────────────────────────
+    else:
+        items = stock_value
+        watched_hits = [
+            i for i in items
+            if any(w.lower() == i["name"].lower() for w in watched)
+        ]
+        if watched_hits:
+            lines.append("")
+            lines.append("✨ <b>Watched items in stock:</b>")
+            for i in watched_hits:
+                lines.append(f"   • {i['name']}  ×{i['qty']}")
+
         lines.append("")
         lines.append("📦 <b>All items:</b>")
-        for i in items:
-            marker = "⭐" if any(w.lower() == i["name"].lower() for w in watched) else "  "
-            lines.append(f"   {marker} {i['name']}  ×{i['qty']}")
-    else:
-        lines.append("")
-        lines.append("   <i>(nothing in stock)</i>")
+        if items:
+            lines.extend(build_item_lines(items, watched))
+        else:
+            lines.append("   <i>(nothing in stock)</i>")
 
     return "\n".join(lines)
 
-# ─── PER-SECTION LOGIC ────────────────────────────────────────
+
+def build_weather_message(new_weathers: list[dict]) -> str:
+    lines = []
+    lines.append(f"🌤️ <b>Weather Update</b> — {now_sgt()} (GMT+8)")
+    lines.append("")
+    for w in new_weathers:
+        emoji = get_weather_emoji(w["name"])
+        cd    = f"  ⏳ {w['countdown']}" if w["countdown"] else ""
+        lines.append(f"  {emoji} <b>{w['name']}</b>{cd}")
+    return "\n".join(lines)
+
+# ─── SECTION / WEATHER LOGIC ──────────────────────────────────
 
 def should_send_for_section(section: str, ts_key: str, timestamps: dict[str, int]) -> bool:
     current_ts = timestamps.get(ts_key)
     if current_ts is None:
         return False
-
     state = section_state.setdefault(section, {"last_ts": None})
     if state["last_ts"] is None:
         state["last_ts"] = current_ts
         return False
-
     if current_ts != state["last_ts"]:
         state["last_ts"] = current_ts
         return True
-
     return False
+
+
+def check_weather(html: str):
+    """
+    Compares current weather names to the last known set.
+    Sends a message only for newly appearing weathers.
+    """
+    global last_weather_names
+
+    weathers     = parse_weather(html)
+    current_names = {w["name"] for w in weathers}
+    new_weathers  = [w for w in weathers if w["name"] not in last_weather_names]
+
+    if new_weathers:
+        msg = build_weather_message(new_weathers)
+        send_telegram(msg)
+        print(f"  🌤️  Weather alert: {[w['name'] for w in new_weathers]}")
+
+    last_weather_names = current_names
 
 
 def next_wakeup(timestamps: dict[str, int]) -> float:
@@ -297,11 +434,16 @@ def next_wakeup(timestamps: dict[str, int]) -> float:
     future = [ts for ts in timestamps.values() if ts > now]
     if not future:
         return FALLBACK_POLL
-    return max(0, min(future) - now) + BUFFER_SECONDS
+    # Wake up at the sooner of: next restock OR next weather poll
+    next_restock = max(0, min(future) - now) + BUFFER_SECONDS
+    next_weather = max(0, WEATHER_POLL - (now - last_weather_poll))
+    return min(next_restock, next_weather)
 
 # ─── MAIN LOOP ────────────────────────────────────────────────
 
 def main():
+    global last_weather_poll
+
     print("🌱 Grow a Garden Telegram Bot started!")
     print(f"   Watching: {WATCHED_ITEMS}\n")
 
@@ -309,7 +451,7 @@ def main():
         "🌱 <b>Grow a Garden Bot is online!</b>\n\n"
         f"Watching for: {', '.join(WATCHED_ITEMS)}\n\n"
         "You'll get a message per shop every time it restocks,\n"
-        "with the full stock list and time until next refresh. 🌸"
+        "plus weather alerts whenever new weather appears! 🌸"
     )
 
     while True:
@@ -325,22 +467,26 @@ def main():
         timestamps = parse_restock_timestamps(html)
         stock      = parse_stock(html)
 
+        # ── Stock section checks ──────────────────────────────
         sent_count = 0
         for section, ts_key in SECTION_TIMESTAMP_MAP.items():
             if section not in stock:
                 continue
-
             if should_send_for_section(section, ts_key, timestamps):
                 next_ts = timestamps.get(ts_key)
-                items   = stock[section]
-                msg     = build_section_message(section, items, WATCHED_ITEMS, next_ts)
+                msg     = build_section_message(section, stock[section], WATCHED_ITEMS, next_ts)
                 send_telegram(msg)
-                print(f"  📨 Sent: {section} ({len(items)} items)")
+                print(f"  📨 Sent: {section}")
                 sent_count += 1
                 time.sleep(0.5)
 
         if sent_count == 0:
             print(f"  — No sections restocked this cycle.")
+
+        # ── Weather check (every WEATHER_POLL seconds) ────────
+        if time.time() - last_weather_poll >= WEATHER_POLL:
+            check_weather(html)
+            last_weather_poll = time.time()
 
         wait    = next_wakeup(timestamps)
         wake_at = datetime.fromtimestamp(time.time() + wait, TZ_SGT).strftime("%H:%M:%S")
