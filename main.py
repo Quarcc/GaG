@@ -507,13 +507,12 @@ def main():
 
     send_telegram(
         "🌱 <b>Grow a Garden Bot is online!</b>\n\n"
-        f"Watching for: {', '.join(WATCHED_ITEMS)}\n\n"
         "You'll get a message per shop every time it restocks,\n"
         "plus weather alerts whenever new weather appears!\n\n"
         "📋 /watchlist — see watched items\n"
         "📦 /stock — get current stock now\n"
-        "🌦 /weather — check current weather\n"
-        "🌸"
+        "🌦 /weather — check current weather\n\n"
+        "🌸 Made with luv~ hehe"
     )
 
     while True:
