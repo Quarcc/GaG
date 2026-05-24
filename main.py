@@ -7,10 +7,10 @@ the full stock list and time until the next restock.
 
 SETUP
 -----
-1. pip install requests beautifulsoup4
+1. pip install requests beautifulsoup4 python-dotenv
 2. Create bot via @BotFather → copy token
 3. Get chat ID via https://api.telegram.org/bot<TOKEN>/getUpdates
-4. Fill in BOT_TOKEN, CHAT_ID, and WATCHED_ITEMS below
+4. Fill in .env with BOT_TOKEN, CHAT_ID1, CHAT_ID2
 5. Run: python main.py
 """
 
@@ -18,7 +18,7 @@ import time
 import re
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import os
 
@@ -26,7 +26,7 @@ import os
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_IDS   = [os.getenv("CHAT_ID1"), os.getenv("CHAT_ID2")]
+CHAT_IDS  = [os.getenv("CHAT_ID1"), os.getenv("CHAT_ID2")]
 
 WATCHED_ITEMS = [
     "Chrimson Thorn",
@@ -41,34 +41,45 @@ WATCHED_ITEMS = [
     "Medium Toy",
     "Medium Treat",
     "Levelup Lollipop",
-    
     # Add more here ↓
 ]
 
-URL            = "https://www.growagardenstocknow.com/"
-BUFFER_SECONDS = 5    # seconds after restock before we scrape
-FALLBACK_POLL  = 300  # fallback if timestamps can't be parsed
+# Items to always hide — removed from game or unwanted
+EXCLUDED_ITEMS = {
+    "broccoli",
+    "potato",
+}
 
-# Maps the timestamp key from the page JS → the shop section aria-label
-# e.g. "seeds" timestamp controls "Seeds Stock" and "Season Stock"
+# Event items to filter out by keyword (case-insensitive)
+EXCLUDED_EVENT_KEYWORDS = [
+    "easter",
+    "chocolate",
+]
+
+URL            = "https://www.growagardenstocknow.com/"
+BUFFER_SECONDS = 5
+FALLBACK_POLL  = 300
+TZ_SGT         = timezone(timedelta(hours=8))  # GMT+8
+
 SECTION_TIMESTAMP_MAP = {
-    "Seeds Stock":    "seeds",
-    "Gear Stock":     "gear",
-    "Egg Stock":      "egg",
-    "Event Stock":    "event",
-    "Merchant Stock": "merchant",
+    "Seeds Stock — Daily Deals": "seeds",
+    "Seeds Stock — Shop":        "seeds",
+    "Gear Stock":                "gear",
+    "Egg Stock":                 "egg",
+    "Event Stock":               "event",
+    "Merchant Stock":            "merchant",
 }
 
 SECTION_EMOJI = {
-    "Seeds Stock":    "🌱",
-    "Gear Stock":     "🛠️",
-    "Egg Stock":      "🥚",
-    "Event Stock":    "🎪",
-    "Merchant Stock": "🛒",
+    "Seeds Stock — Daily Deals": "💥",
+    "Seeds Stock — Shop":        "🌱",
+    "Gear Stock":                "🛠️",
+    "Egg Stock":                 "🥚",
+    "Event Stock":               "🎪",
+    "Merchant Stock":            "🛒",
 }
 
 # ─── STATE ────────────────────────────────────────────────────
-# Per-section: last stock snapshot and last notified set
 section_state: dict[str, dict] = {}
 
 # ─── TELEGRAM ─────────────────────────────────────────────────
@@ -107,11 +118,6 @@ def fetch_page() -> str | None:
 # ─── PARSERS ──────────────────────────────────────────────────
 
 def parse_restock_timestamps(html: str) -> dict[str, int]:
-    """
-    Extracts Unix timestamps from inline JS:
-      startCountdown("seeds_ts", 1779596400, "seeds_stock_status");
-    Returns {"seeds": 1779596400, "gear": 1779596400, ...}
-    """
     pattern = re.compile(
         r'startCountdown\(\s*"([^"]+_ts)"\s*,\s*(\d+)\s*,\s*"[^"]*"\s*\)'
     )
@@ -121,17 +127,72 @@ def parse_restock_timestamps(html: str) -> dict[str, int]:
     }
 
 
+def is_excluded_event_item(name: str) -> bool:
+    name_lower = name.lower()
+    return any(kw in name_lower for kw in EXCLUDED_EVENT_KEYWORDS)
+
+
 def parse_stock(html: str) -> dict[str, list[dict]]:
     """
-    Returns {"Seeds Stock": [{"name": ..., "qty": ...}, ...], ...}
+    Returns stock dict. Seeds Stock is split into two keys:
+      "Seeds Stock — Daily Deals"
+      "Seeds Stock — Shop"
+    Event items matching excluded keywords are dropped.
+    Items in EXCLUDED_ITEMS are dropped globally.
     """
     soup   = BeautifulSoup(html, "html.parser")
     result = {}
 
     for article in soup.find_all("article", attrs={"aria-label": True}):
         section = article["aria-label"]
-        items   = []
 
+        # ── Seeds Stock: split by h3 subheaders ──────────────
+        if section == "Seeds Stock":
+            current_sub = None
+            sub_items: dict[str, list] = {
+                "Seeds Stock — Daily Deals": [],
+                "Seeds Stock — Shop":        [],
+            }
+
+            for tag in article.find_all(["h3", "li"]):
+                if tag.name == "h3":
+                    label = tag.get_text(strip=True).lower()
+                    if "daily" in label:
+                        current_sub = "Seeds Stock — Daily Deals"
+                    elif "shop" in label:
+                        current_sub = "Seeds Stock — Shop"
+                    else:
+                        current_sub = None
+                    continue
+
+                if tag.name == "li" and current_sub:
+                    name_tag = tag.find(
+                        "span",
+                        class_=lambda c: c and "text-[15px]" in c and "break-words" in c
+                    )
+                    qty_tag = tag.find(
+                        "span",
+                        class_=lambda c: c and "text-[13px]" in c and "whitespace-nowrap" in c
+                    )
+                    if not name_tag:
+                        continue
+                    name = name_tag.get_text(strip=True)
+                    if not name or name.lower() in EXCLUDED_ITEMS:
+                        continue
+                    qty = 0
+                    if qty_tag:
+                        try:
+                            qty = int(qty_tag.get_text(strip=True).replace("Qty:", "").strip())
+                        except ValueError:
+                            qty = 1
+                    sub_items[current_sub].append({"name": name, "qty": qty})
+
+            for key, items in sub_items.items():
+                result[key] = items
+            continue
+
+        # ── All other sections ────────────────────────────────
+        items = []
         for li in article.find_all("li"):
             name_tag = li.find(
                 "span",
@@ -146,6 +207,10 @@ def parse_stock(html: str) -> dict[str, list[dict]]:
             name = name_tag.get_text(strip=True)
             if not name or name == "No accepted plants right now.":
                 continue
+            if name.lower() in EXCLUDED_ITEMS:
+                continue
+            if section == "Event Stock" and is_excluded_event_item(name):
+                continue
             qty = 0
             if qty_tag:
                 try:
@@ -154,19 +219,23 @@ def parse_stock(html: str) -> dict[str, list[dict]]:
                     qty = 1
             items.append({"name": name, "qty": qty})
 
-        result[section] = items  # include empty sections too
+        result[section] = items
 
     return result
 
 # ─── FORMATTING ───────────────────────────────────────────────
 
 def format_time_until(ts: int) -> str:
-    """Returns '4m 32s' or 'now' from a Unix timestamp."""
     diff = int(ts - time.time())
     if diff <= 0:
         return "now"
     m, s = divmod(diff, 60)
     return f"{m}m {s}s" if m else f"{s}s"
+
+
+def now_sgt() -> str:
+    """Current time formatted in GMT+8."""
+    return datetime.now(TZ_SGT).strftime("%H:%M")
 
 
 def build_section_message(
@@ -175,31 +244,13 @@ def build_section_message(
     watched: list[str],
     next_restock_ts: int | None,
 ) -> str:
-    """
-    Builds the full Telegram message for one shop section.
-
-    Layout:
-      🌱 Seeds Stock — restocked at 14:35
-      ⏱ Next restock in: 4m 58s
-
-      ✨ Watched items in stock:
-         • Sugar Apple  ×1
-         • Grape        ×2
-
-      📦 All items:
-         • Blueberry    ×3
-         • Carrot       ×18
-         ...
-    """
-    emoji       = SECTION_EMOJI.get(section, "📦")
-    now_str     = datetime.now().strftime("%H:%M")
-    next_str    = format_time_until(next_restock_ts) if next_restock_ts else "unknown"
+    emoji    = SECTION_EMOJI.get(section, "📦")
+    next_str = format_time_until(next_restock_ts) if next_restock_ts else "unknown"
 
     lines = []
-    lines.append(f"{emoji} <b>{section}</b> — restocked at {now_str}")
+    lines.append(f"{emoji} <b>{section}</b> — restocked at {now_sgt()} (GMT+8)")
     lines.append(f"⏱ Next restock in: <b>{next_str}</b>")
 
-    # Watched items
     watched_hits = [
         i for i in items
         if any(w.lower() == i["name"].lower() for w in watched)
@@ -210,7 +261,6 @@ def build_section_message(
         for i in watched_hits:
             lines.append(f"   • {i['name']}  ×{i['qty']}")
 
-    # All items
     if items:
         lines.append("")
         lines.append("📦 <b>All items:</b>")
@@ -226,23 +276,16 @@ def build_section_message(
 # ─── PER-SECTION LOGIC ────────────────────────────────────────
 
 def should_send_for_section(section: str, ts_key: str, timestamps: dict[str, int]) -> bool:
-    """
-    Returns True if this section's restock timer has just expired
-    (i.e. the timestamp changed since last time we checked, or
-    this is the first run).
-    """
     current_ts = timestamps.get(ts_key)
     if current_ts is None:
         return False
 
     state = section_state.setdefault(section, {"last_ts": None})
     if state["last_ts"] is None:
-        # First run — record timestamp but don't send (avoid spam on startup)
         state["last_ts"] = current_ts
         return False
 
     if current_ts != state["last_ts"]:
-        # Timestamp changed → a new restock cycle started
         state["last_ts"] = current_ts
         return True
 
@@ -250,7 +293,6 @@ def should_send_for_section(section: str, ts_key: str, timestamps: dict[str, int
 
 
 def next_wakeup(timestamps: dict[str, int]) -> float:
-    """Sleep until the soonest upcoming restock + buffer."""
     now    = time.time()
     future = [ts for ts in timestamps.values() if ts > now]
     if not future:
@@ -271,8 +313,8 @@ def main():
     )
 
     while True:
-        now_str = datetime.now().strftime("%H:%M:%S")
-        print(f"[{now_str}] Fetching page...")
+        now_str = datetime.now(TZ_SGT).strftime("%H:%M:%S")
+        print(f"[{now_str} SGT] Fetching page...")
 
         html = fetch_page()
         if not html:
@@ -289,21 +331,20 @@ def main():
                 continue
 
             if should_send_for_section(section, ts_key, timestamps):
-                # Find the NEXT restock for this section (the new timestamp)
                 next_ts = timestamps.get(ts_key)
                 items   = stock[section]
                 msg     = build_section_message(section, items, WATCHED_ITEMS, next_ts)
                 send_telegram(msg)
                 print(f"  📨 Sent: {section} ({len(items)} items)")
                 sent_count += 1
-                time.sleep(0.5)  # small delay between messages
+                time.sleep(0.5)
 
         if sent_count == 0:
             print(f"  — No sections restocked this cycle.")
 
         wait    = next_wakeup(timestamps)
-        wake_at = datetime.fromtimestamp(time.time() + wait).strftime("%H:%M:%S")
-        print(f"  💤 Sleeping {wait:.0f}s — next check at {wake_at}\n")
+        wake_at = datetime.fromtimestamp(time.time() + wait, TZ_SGT).strftime("%H:%M:%S")
+        print(f"  💤 Sleeping {wait:.0f}s — next check at {wake_at} SGT\n")
         time.sleep(wait)
 
 
