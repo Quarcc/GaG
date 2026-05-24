@@ -100,7 +100,7 @@ def get_weather_emoji(name: str) -> str:
     for k, v in WEATHER_EMOJI.items():
         if k in key:
             return v
-    return "🌤️"
+    return "🌤"
 
 # ─── STATE ────────────────────────────────────────────────────
 section_state: dict[str, dict] = {}
@@ -192,15 +192,23 @@ def parse_weather(html: str) -> list[dict]:
         #   contains a nested <span>Ends in: 1m 15s</span>
         idx           = div["id"].split("_")[-1]
         countdown_tag = section.find("span", id=f"weather_countdown_{idx}")
-        countdown     = ""
+        countdown     = None
         if countdown_tag:
             # Grab all text inside including nested spans
             full_text = countdown_tag.get_text(separator=" ", strip=True)
             # Skip ended weathers
             if "ended" in full_text.lower():
                 continue
-            # Strip the "Ends in:" prefix if present, keep just the time
-            countdown = re.sub(r"(?i)ends\s*in\s*:?\s*", "", full_text).strip()
+            # Handle "Ends in: 1m 15s" → keep the duration part
+            # Handle "4:58 pm" end-time → keep as-is and label as "Ends at"
+            duration_match = re.search(r"(?i)ends\s*in\s*:?\s*(.+)", full_text)
+            endtime_match  = re.search(r"(\d{1,2}:\d{2}\s*(?:am|pm))", full_text, re.IGNORECASE)
+            if duration_match:
+                countdown = ("duration", duration_match.group(1).strip())
+            elif endtime_match:
+                countdown = ("endtime", endtime_match.group(1).strip())
+            else:
+                countdown = ("raw", full_text.strip())
 
         weathers.append({"name": name, "countdown": countdown})
 
@@ -392,12 +400,22 @@ def build_section_message(
 
 def build_weather_message(new_weathers: list[dict]) -> str:
     lines = []
-    lines.append(f"🌤️ <b>Weather Update</b> — {now_sgt()} (GMT+8)")
+    lines.append(f"🌦 <b>Weather Alert!</b> — {now_sgt()} (GMT+8)")
     lines.append("")
     for w in new_weathers:
         emoji = get_weather_emoji(w["name"])
-        cd    = f"  ⏳ {w['countdown']}" if w["countdown"] else ""
-        lines.append(f"  {emoji} <b>{w['name']}</b>{cd}")
+        lines.append(f"  {emoji} <b>{w['name']}</b>")
+        cd = w["countdown"]
+        if cd:
+            kind, val = cd
+            if kind == "duration":
+                lines.append(f"      ⏳ Ends in: {val}")
+            elif kind == "endtime":
+                lines.append(f"      ⏳ Ends at: {val}")
+            else:
+                lines.append(f"      ⏳ {val}")
+        else:
+            lines.append(f"      ⏳ Duration unknown")
     return "\n".join(lines)
 
 # ─── SECTION / WEATHER LOGIC ──────────────────────────────────
