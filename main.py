@@ -165,20 +165,7 @@ def parse_weather(html: str) -> list[dict]:
         if not name:
             continue
 
-        # Countdown span — grab the raw text exactly as the page shows it
-        idx           = div["id"].split("_")[-1]
-        countdown_tag = section.find("span", id=f"weather_countdown_{idx}")
-        countdown     = None
-
-        if countdown_tag:
-            print('debug')
-            raw = countdown_tag.get_text(separator=" ", strip=True)
-            print(raw)
-            if "ended" in raw.lower():
-                continue  # skip expired weathers
-            countdown = raw  # e.g. "Ends in: 1m 15s" or "4:58 pm" — shown as-is
-
-        weathers.append({"name": name, "countdown": countdown})
+        weathers.append({"name": name})
 
     return weathers
 
@@ -353,19 +340,15 @@ def build_section_message(
 
 def build_weather_message(new_weathers: list[dict]) -> str:
     """
-    Name already contains the emoji from the page (e.g. "🌙 NightEvent").
-    Countdown is the raw string from the page (e.g. "Ends in: 1m 15s").
-    No extra processing — show exactly what the site shows.
+    Name comes directly from the page and already includes the emoji.
+    The countdown is JS-rendered so not available via scraping.
+    We show the detection time instead.
     """
     lines = []
     lines.append(f"🌦 <b>Weather Alert!</b> — {now_sgt()} (GMT+8)")
     lines.append("")
     for w in new_weathers:
         lines.append(f"  <b>{w['name']}</b>")
-        if w["countdown"]:
-            lines.append(f"      ⏳ {w['countdown']}")
-        else:
-            lines.append(f"      ⏳ Duration unknown")
     return "\n".join(lines)
 
 # ─── SECTION / WEATHER LOGIC ──────────────────────────────────
