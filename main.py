@@ -29,12 +29,19 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_IDS   = [os.getenv("CHAT_ID1"), os.getenv("CHAT_ID2")]
 
 WATCHED_ITEMS = [
-    "Sugar Apple",
-    "Grape",
-    "Mango",
-    "Beanstalk",
-    "Mushroom",
-    "Burning Bud"
+    "Chrimson Thorn",
+    "Zebrazinkle",
+    "Octobloom",
+    "Alien Apple",
+    "Pollenvine",
+    "Bug Egg",
+    "Jungle Egg",
+    "Master Sprinkler",
+    "Grandmaster Sprinkler",
+    "Medium Toy",
+    "Medium Treat",
+    "Levelup Lollipop",
+    
     # Add more here ↓
 ]
 
