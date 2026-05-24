@@ -171,7 +171,9 @@ def parse_weather(html: str) -> list[dict]:
         countdown     = None
 
         if countdown_tag:
+            print('debug')
             raw = countdown_tag.get_text(separator=" ", strip=True)
+            print(raw)
             if "ended" in raw.lower():
                 continue  # skip expired weathers
             countdown = raw  # e.g. "Ends in: 1m 15s" or "4:58 pm" — shown as-is
