@@ -189,15 +189,21 @@ def parse_weather(html: str) -> list[dict]:
             continue
 
         # Countdown: <span id="weather_countdown_N">
+        #   contains a nested <span>Ends in: 1m 15s</span>
         idx           = div["id"].split("_")[-1]
         countdown_tag = section.find("span", id=f"weather_countdown_{idx}")
-        countdown     = countdown_tag.get_text(strip=True) if countdown_tag else ""
-
-        # Skip ended weathers
-        if "ended" in countdown.lower():
-            continue
+        countdown     = ""
+        if countdown_tag:
+            # Grab all text inside including nested spans
+            full_text = countdown_tag.get_text(separator=" ", strip=True)
+            # Skip ended weathers
+            if "ended" in full_text.lower():
+                continue
+            # Strip the "Ends in:" prefix if present, keep just the time
+            countdown = re.sub(r"(?i)ends\s*in\s*:?\s*", "", full_text).strip()
 
         weathers.append({"name": name, "countdown": countdown})
+
 
     return weathers
 
