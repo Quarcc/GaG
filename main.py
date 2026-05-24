@@ -54,21 +54,21 @@ EXCLUDED_ITEMS = {
 EXCLUDED_EVENT_KEYWORDS = [
     "easter",
     "chocolate",
+    "gummy",
 ]
 
 URL            = "https://www.growagardenstocknow.com/"
 BUFFER_SECONDS = 5
 FALLBACK_POLL  = 300
-WEATHER_POLL   = 30   # check weather every 60s
+WEATHER_POLL   = 30
 TZ_SGT         = timezone(timedelta(hours=8))  # GMT+8
 
-# Seeds are now ONE combined message, split internally by header
 SECTION_TIMESTAMP_MAP = {
-    "Seeds Stock":   "seeds",
-    "Gear Stock":    "gear",
-    "Egg Stock":     "egg",
-    "Event Stock":   "event",
-    "Merchant Stock":"merchant",
+    "Seeds Stock":    "seeds",
+    "Gear Stock":     "gear",
+    "Egg Stock":      "egg",
+    "Event Stock":    "event",
+    "Merchant Stock": "merchant",
 }
 
 SECTION_EMOJI = {
@@ -79,32 +79,9 @@ SECTION_EMOJI = {
     "Merchant Stock": "🛒",
 }
 
-WEATHER_EMOJI = {
-    "gentledrizzle":  "🌦️",
-    "rain":           "🌧️",
-    "thunderstorm":   "⛈️",
-    "sunshower":      "🌈",
-    "bloodmoon":      "🌕",
-    "jelly":          "🪼",
-    "meteor":         "☄️",
-    "windy":          "🌬️",
-    "frost":          "❄️",
-    "fog":            "🌫️",
-    "heatwave":       "🌡️",
-    "snow":           "🌨️",
-    "sandstorm":      "🌪️",
-}
-
-def get_weather_emoji(name: str) -> str:
-    key = name.lower().replace(" ", "")
-    for k, v in WEATHER_EMOJI.items():
-        if k in key:
-            return v
-    return "🌤"
-
 # ─── STATE ────────────────────────────────────────────────────
 section_state: dict[str, dict] = {}
-last_weather_names: set[str]   = set()   # tracks active weathers
+last_weather_names: set[str]   = set()
 last_weather_poll:  float       = 0.0
 
 # ─── TELEGRAM ─────────────────────────────────────────────────
@@ -156,28 +133,28 @@ def parse_weather(html: str) -> list[dict]:
     """
     Parses weather entries from the Weather Info section.
     Each entry: { name, countdown }
-    Looks for div[id^="weather_"] containing the name span and countdown span.
-    Skips entries where countdown text is "ended".
+    - name:      full text from the page including any emoji (e.g. "🌙 NightEvent")
+    - countdown: raw countdown string exactly as shown on the page (e.g. "Ends in: 1m 15s")
+                 None if not found or already ended.
     """
-    soup    = BeautifulSoup(html, "html.parser")
+    soup     = BeautifulSoup(html, "html.parser")
     weathers = []
 
     section = soup.find("section", attrs={"aria-label": "Weather Info"})
     if not section:
         return weathers
 
-    # Each weather row: <div id="weather_1" ...>
     for div in section.find_all("div", id=re.compile(r"^weather_\d+$")):
-        # Name is the last <span> directly in this div (after the dot span)
-        spans = div.find_all("span", recursive=False)
-        name  = None
-        for span in spans:
+        # Grab the weather name — it's the span after the dot span
+        # The dot span contains only "●", the next sibling span has the name (with emoji)
+        name = None
+        for span in div.find_all("span", recursive=False):
             text = span.get_text(strip=True)
             if text and text != "●":
                 name = text
                 break
 
-        # Fallback: any span that isn't the dot
+        # Fallback: any span not the dot
         if not name:
             for span in div.find_all("span"):
                 text = span.get_text(strip=True)
@@ -188,30 +165,18 @@ def parse_weather(html: str) -> list[dict]:
         if not name:
             continue
 
-        # Countdown: <span id="weather_countdown_N">
-        #   contains a nested <span>Ends in: 1m 15s</span>
+        # Countdown span — grab the raw text exactly as the page shows it
         idx           = div["id"].split("_")[-1]
         countdown_tag = section.find("span", id=f"weather_countdown_{idx}")
         countdown     = None
+
         if countdown_tag:
-            # Grab all text inside including nested spans
-            full_text = countdown_tag.get_text(separator=" ", strip=True)
-            # Skip ended weathers
-            if "ended" in full_text.lower():
-                continue
-            # Handle "Ends in: 1m 15s" → keep the duration part
-            # Handle "4:58 pm" end-time → keep as-is and label as "Ends at"
-            duration_match = re.search(r"(?i)ends\s*in\s*:?\s*(.+)", full_text)
-            endtime_match  = re.search(r"(\d{1,2}:\d{2}\s*(?:am|pm))", full_text, re.IGNORECASE)
-            if duration_match:
-                countdown = ("duration", duration_match.group(1).strip())
-            elif endtime_match:
-                countdown = ("endtime", endtime_match.group(1).strip())
-            else:
-                countdown = ("raw", full_text.strip())
+            raw = countdown_tag.get_text(separator=" ", strip=True)
+            if "ended" in raw.lower():
+                continue  # skip expired weathers
+            countdown = raw  # e.g. "Ends in: 1m 15s" or "4:58 pm" — shown as-is
 
         weathers.append({"name": name, "countdown": countdown})
-
 
     return weathers
 
@@ -321,7 +286,6 @@ def now_sgt() -> str:
 
 
 def build_item_lines(items: list[dict], watched: list[str]) -> list[str]:
-    """Returns formatted item lines with ⭐ for watched."""
     lines = []
     for i in items:
         marker = "⭐" if any(w.lower() == i["name"].lower() for w in watched) else "  "
@@ -331,7 +295,7 @@ def build_item_lines(items: list[dict], watched: list[str]) -> list[str]:
 
 def build_section_message(
     section: str,
-    stock_value,           # list[dict] or dict{"Daily Deals":[], "Shop":[]}
+    stock_value,
     watched: list[str],
     next_restock_ts: int | None,
 ) -> str:
@@ -344,9 +308,7 @@ def build_section_message(
 
     # ── Seeds: combined message with two subsections ──────────
     if isinstance(stock_value, dict):
-        all_items = stock_value.get("Daily Deals", []) + stock_value.get("Shop", [])
-
-        # Watched hits across both subsections
+        all_items    = stock_value.get("Daily Deals", []) + stock_value.get("Shop", [])
         watched_hits = [
             i for i in all_items
             if any(w.lower() == i["name"].lower() for w in watched)
@@ -357,27 +319,19 @@ def build_section_message(
             for i in watched_hits:
                 lines.append(f"   • {i['name']}  ×{i['qty']}")
 
-        # Daily Deals subsection
         daily = stock_value.get("Daily Deals", [])
         lines.append("")
         lines.append("💥 <b>Daily Deals:</b>")
-        if daily:
-            lines.extend(build_item_lines(daily, watched))
-        else:
-            lines.append("   <i>(none)</i>")
+        lines.extend(build_item_lines(daily, watched) if daily else ["   <i>(none)</i>"])
 
-        # Shop subsection
         shop = stock_value.get("Shop", [])
         lines.append("")
         lines.append("🏪 <b>Shop:</b>")
-        if shop:
-            lines.extend(build_item_lines(shop, watched))
-        else:
-            lines.append("   <i>(none)</i>")
+        lines.extend(build_item_lines(shop, watched) if shop else ["   <i>(none)</i>"])
 
     # ── All other sections: flat list ─────────────────────────
     else:
-        items = stock_value
+        items        = stock_value
         watched_hits = [
             i for i in items
             if any(w.lower() == i["name"].lower() for w in watched)
@@ -390,30 +344,24 @@ def build_section_message(
 
         lines.append("")
         lines.append("📦 <b>All items:</b>")
-        if items:
-            lines.extend(build_item_lines(items, watched))
-        else:
-            lines.append("   <i>(nothing in stock)</i>")
+        lines.extend(build_item_lines(items, watched) if items else ["   <i>(nothing in stock)</i>"])
 
     return "\n".join(lines)
 
 
 def build_weather_message(new_weathers: list[dict]) -> str:
+    """
+    Name already contains the emoji from the page (e.g. "🌙 NightEvent").
+    Countdown is the raw string from the page (e.g. "Ends in: 1m 15s").
+    No extra processing — show exactly what the site shows.
+    """
     lines = []
     lines.append(f"🌦 <b>Weather Alert!</b> — {now_sgt()} (GMT+8)")
     lines.append("")
     for w in new_weathers:
-        emoji = get_weather_emoji(w["name"])
-        lines.append(f"  {emoji} <b>{w['name']}</b>")
-        cd = w["countdown"]
-        if cd:
-            kind, val = cd
-            if kind == "duration":
-                lines.append(f"      ⏳ Ends in: {val}")
-            elif kind == "endtime":
-                lines.append(f"      ⏳ Ends at: {val}")
-            else:
-                lines.append(f"      ⏳ {val}")
+        lines.append(f"  <b>{w['name']}</b>")
+        if w["countdown"]:
+            lines.append(f"      ⏳ {w['countdown']}")
         else:
             lines.append(f"      ⏳ Duration unknown")
     return "\n".join(lines)
@@ -435,31 +383,24 @@ def should_send_for_section(section: str, ts_key: str, timestamps: dict[str, int
 
 
 def check_weather(html: str):
-    """
-    Compares current weather names to the last known set.
-    Sends a message only for newly appearing weathers.
-    """
     global last_weather_names
 
-    weathers     = parse_weather(html)
+    weathers      = parse_weather(html)
     current_names = {w["name"] for w in weathers}
     new_weathers  = [w for w in weathers if w["name"] not in last_weather_names]
 
     if new_weathers:
         msg = build_weather_message(new_weathers)
         send_telegram(msg)
-        print(f"  🌤️  Weather alert: {[w['name'] for w in new_weathers]}")
+        print(f"  🌦  Weather alert: {[w['name'] for w in new_weathers]}")
 
     last_weather_names = current_names
 
 
 def next_wakeup(timestamps: dict[str, int]) -> float:
-    now    = time.time()
-    future = [ts for ts in timestamps.values() if ts > now]
-    if not future:
-        return FALLBACK_POLL
-    # Wake up at the sooner of: next restock OR next weather poll
-    next_restock = max(0, min(future) - now) + BUFFER_SECONDS
+    now          = time.time()
+    future       = [ts for ts in timestamps.values() if ts > now]
+    next_restock = (max(0, min(future) - now) + BUFFER_SECONDS) if future else FALLBACK_POLL
     next_weather = max(0, WEATHER_POLL - (now - last_weather_poll))
     return min(next_restock, next_weather)
 
