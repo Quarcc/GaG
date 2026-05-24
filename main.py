@@ -59,7 +59,7 @@ EXCLUDED_EVENT_KEYWORDS = [
 URL            = "https://www.growagardenstocknow.com/"
 BUFFER_SECONDS = 5
 FALLBACK_POLL  = 300
-WEATHER_POLL   = 60   # check weather every 60s
+WEATHER_POLL   = 30   # check weather every 60s
 TZ_SGT         = timezone(timedelta(hours=8))  # GMT+8
 
 # Seeds are now ONE combined message, split internally by header
