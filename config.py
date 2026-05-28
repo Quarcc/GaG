@@ -8,22 +8,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_IDS  = [os.getenv("CHAT_ID1"), os.getenv("CHAT_ID2")]
 
-# ─── Watched & Excluded ───────────────────────────────────────
-WATCHED_ITEMS = [
-    "Chrimson Thorn",
-    "Zebrazinkle",
-    "Octobloom",
-    "Alien Apple",
-    "Pollenvine",
-    "Bug Egg",
-    "Jungle Egg",
-    "Master Sprinkler",
-    "Grandmaster Sprinkler",
-    "Medium Toy",
-    "Medium Treat",
-    "Levelup Lollipop",
-    # Add more here ↓
-]
+# ─── Excluded ───────────────────────────────────────
 
 EXCLUDED_ITEMS = {
     "broccoli",

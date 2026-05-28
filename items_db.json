@@ -1,0 +1,48 @@
+{
+  "seeds": {
+    "Common": [
+      "Carrot", "Strawberry", "Horned Redrose"
+    ],
+    "Uncommon": [
+      "Blueberry", "Orange Tulip", "Rose", "Autumn Shroom", "Buttercup",
+      "Orange Delight", "Banana Orchid", "Olive", "Gem Fruit", "Coinfruit"
+    ],
+    "Rare": [
+      "Tomato", "Corn", "Daffodil", "Cauliflower", "Foxglove", "Mandrake",
+      "Fall Berry", "Banesberry", "Viburnum Berry", "Fissure Berry", "Pomegranate"
+    ],
+    "Legendary": [
+      "Watermelon", "Pumpkin", "Apple", "Bamboo", "Rafflesia", "Green Apple",
+      "Avocado", "Banana", "Lilac", "Speargrass", "Buddhas Hand", "Protea",
+      "Coilvine", "Sherrybloom"
+    ],
+    "Mythical": [
+      "Coconut", "Cactus", "Dragon Fruit", "Mango", "Peach", "Pineapple",
+      "Kiwi", "Bell Pepper", "Prickly Pear", "Pink Lily", "Purple Dahlia",
+      "Torchflare", "Auburn Pine", "Kniphofia", "Ghost Pepper", "Hollow Bamboo",
+      "Wild Pineapple"
+    ],
+    "Divine": [
+      "Grape", "Mushroom", "Pepper", "Cacao", "Sunflower", "Loquat", "Feijoa",
+      "Pitcher Plant", "Legacy Sunflower", "Brussels Sprout", "Firewell",
+      "Baobab", "Thornspire", "Yarrow", "Asteris", "Pinkside Dandelion"
+    ],
+    "Prismatic": [
+      "Beanstalk", "Ember Lily", "Sugar Apple", "Burning Bud", "Giant Pinecone",
+      "Elder Strawberry", "Romanesco", "Cocomango", "Wyrmvine"
+    ],
+    "Transcendent": [
+      "Crimson Thorn", "Zebrazinkle", "Octobloom", "Maple Resin"
+    ]
+  },
+  "gear": [
+    "Watering Can", "Trowel", "Harvest Tool", "Favorite Tool", "Recall Wrench",
+    "Magnifying Glass", "Basic Sprinkler", "Advanced Sprinkler", "Master Sprinkler",
+    "Grandmaster Sprinkler", "Pet Name Reroller", "Trading Ticket",
+    "Medium Toy", "Medium Treat", "Levelup Lollipop", "Grow All"
+  ],
+  "eggs": [
+    "Common Egg", "Uncommon Egg", "Rare Egg", "Legendary Egg",
+    "Bug Egg", "Jungle Egg", "Gem Egg", "Paradise Egg"
+  ]
+}

@@ -1,20 +1,16 @@
 """
 🌱 Grow a Garden — Telegram Notification Bot
-=============================================
 Entry point. Runs the main polling loop and starts the
 background command listener thread.
 
 SETUP
 -----
 1. pip install -r requirements.txt
-2. Fill in .env:
-       BOT_TOKEN=...
-       CHAT_ID1=...
-       CHAT_ID2=...
+2. Fill in .env: BOT_TOKEN, CHAT_ID1, CHAT_ID2
 3. Register commands in @BotFather → /setcommands:
-       stock     - Show current stock right now
-       watchlist - Show watched items list
-       weather   - Check current in-game weather
+       stock - Show current stock right now
+       watchlist - Manage your watchlist
+       weather - Check current in-game weather
 4. Run: python main.py
 """
 
@@ -23,7 +19,7 @@ import threading
 from datetime import datetime
 
 from config import (
-    WATCHED_ITEMS,
+    CHAT_IDS,
     SECTION_TIMESTAMP_MAP,
     FALLBACK_POLL,
     WEATHER_POLL,
@@ -34,6 +30,7 @@ from bot.scraper import fetch_page, parse_stock, parse_weather
 from parse_restock_timestamps.formatter import build_section_message, build_weather_message
 from parse_restock_timestamps.telegram import send_telegram
 from parse_restock_timestamps.commands import command_listener
+from watchlist_manager import load_watchlist
 
 
 def parse_restock_timestamps(html: str) -> dict[str, int]:
@@ -52,7 +49,6 @@ section_state: dict[str, dict] = {}
 last_weather_names: set[str]   = set()
 last_weather_poll:  float       = 0.0
 
-# Shared cache — written by main loop, read by /stock handler
 cache      = {"stock": {}, "timestamps": {}, "at": 0.0}
 cache_lock = threading.Lock()
 
@@ -71,6 +67,20 @@ def should_send_for_section(section: str, ts_key: str, timestamps: dict) -> bool
     return False
 
 
+def send_section_to_all(section: str, stock_value, timestamps: dict, next_ts: int | None):
+    """
+    Send a restock notification to each chat ID using their own watchlist.
+    Each user sees their own ⭐ highlights.
+    """
+    for chat_id in CHAT_IDS:
+        if not chat_id:
+            continue
+        watched = load_watchlist(str(chat_id))
+        msg     = build_section_message(section, stock_value, watched, next_ts)
+        send_telegram(msg, str(chat_id))
+        time.sleep(0.3)
+
+
 def check_weather(html: str):
     global last_weather_names
     weathers      = parse_weather(html)
@@ -78,8 +88,8 @@ def check_weather(html: str):
     new_weathers  = [w for w in weathers if w["name"] not in last_weather_names]
     if new_weathers:
         msg = build_weather_message(new_weathers, all_weathers=weathers)
-        send_telegram(msg)
-        print(f"  🌦  Weather alert: {[w['name'] for w in new_weathers]} (active: {list(current_names)})")
+        send_telegram(msg)  # broadcast to all
+        print(f"  🌦  Weather: {[w['name'] for w in new_weathers]}")
     last_weather_names = current_names
 
 
@@ -95,7 +105,6 @@ def main():
     global last_weather_poll
 
     print("🌱 Grow a Garden Telegram Bot started!")
-    print(f"   Watching: {WATCHED_ITEMS}\n")
 
     threading.Thread(
         target=command_listener,
@@ -105,12 +114,14 @@ def main():
 
     send_telegram(
         "🌱 <b>Grow a Garden Bot is online!</b>\n\n"
-        "You'll get a message per shop every time it restocks,\n"
-        "plus weather alerts whenever new weather appears!\n\n"
-        "📋 /watchlist — see watched items\n"
-        "📦 /stock — get current stock now\n"
-        "🌦 /weather — check current weather\n\n"
-        "🌸 Made with luv~ hehe"
+        "You'll get restock alerts and weather updates automatically.\n"
+        "Each of you has your own personal watchlist! 🌸\n\n"
+        "📋 /watchlist — view your list\n"
+        "➕ /watchlist add &lt;item&gt;\n"
+        "➖ /watchlist remove &lt;item&gt;\n"
+        "🔍 /watchlist search &lt;query&gt;\n"
+        "📦 /stock — current stock now\n"
+        "🌦 /weather — current weather"
     )
 
     while True:
@@ -137,8 +148,7 @@ def main():
                 continue
             if should_send_for_section(section, ts_key, timestamps):
                 next_ts = timestamps.get(ts_key)
-                msg     = build_section_message(section, stock[section], WATCHED_ITEMS, next_ts)
-                send_telegram(msg)
+                send_section_to_all(section, stock[section], timestamps, next_ts)
                 print(f"  📨 Sent: {section}")
                 sent_count += 1
                 time.sleep(0.5)
