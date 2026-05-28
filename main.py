@@ -30,7 +30,7 @@ from bot.scraper import fetch_page, parse_stock, parse_weather
 from parse_restock_timestamps.formatter import build_section_message, build_weather_message
 from parse_restock_timestamps.telegram import send_telegram
 from parse_restock_timestamps.commands import command_listener
-from watchlist_manager import load_watchlist
+from gag_watchlist import load_watchlist
 
 
 def parse_restock_timestamps(html: str) -> dict[str, int]:

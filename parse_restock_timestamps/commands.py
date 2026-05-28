@@ -9,7 +9,7 @@ from parse_restock_timestamps.formatter import (
     now_sgt,
 )
 from parse_restock_timestamps.telegram import send_telegram, get_updates
-from watchlist_manager import (
+from gag_watchlist import (
     load_watchlist,
     watchlist_add,
     watchlist_remove,
