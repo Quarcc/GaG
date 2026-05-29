@@ -14,13 +14,13 @@
     "Legendary": [
       "Watermelon", "Pumpkin", "Apple", "Bamboo", "Rafflesia", "Green Apple",
       "Avocado", "Banana", "Lilac", "Speargrass", "Buddhas Hand", "Protea",
-      "Coilvine", "Sherrybloom"
+      "Coilvine", "Sherrybloom", "Broccoli"
     ],
     "Mythical": [
       "Coconut", "Cactus", "Dragon Fruit", "Mango", "Peach", "Pineapple",
       "Kiwi", "Bell Pepper", "Prickly Pear", "Pink Lily", "Purple Dahlia",
       "Torchflare", "Auburn Pine", "Kniphofia", "Ghost Pepper", "Hollow Bamboo",
-      "Wild Pineapple"
+      "Wild Pineapple", "Potato"
     ],
     "Divine": [
       "Grape", "Mushroom", "Pepper", "Cacao", "Sunflower", "Loquat", "Feijoa",
@@ -32,7 +32,7 @@
       "Elder Strawberry", "Romanesco", "Cocomango", "Wyrmvine"
     ],
     "Transcendent": [
-      "Crimson Thorn", "Zebrazinkle", "Octobloom", "Maple Resin", "Alien Apple", "Pollenvine"
+      "Crimson Thorn", "Zebrazinkle", "Octobloom", "Maple Resin", "Alien Apple", "Pollenvine", "Great Pumpkin", "Trinity Fruit", "Peppermint Vine", "Spirit Sparkle", "Reindeer Root", "Firework Fern", "Bonanza Bloom", "Beast Buttercup", "Eggsnapper"
     ]
   },
   "gear": [
