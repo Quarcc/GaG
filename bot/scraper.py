@@ -1,24 +1,48 @@
 import re
-import requests
+import asyncio
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 from config import URL, EXCLUDED_ITEMS, EXCLUDED_EVENT_KEYWORDS
 
 
 def fetch_page() -> str | None:
-    """Download the page HTML. Returns raw text or None on failure."""
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    }
+    """
+    Fetches the page HTML using a real headless Chromium browser.
+    Handles Cloudflare / captcha protection that blocks requests/urllib.
+    Returns raw HTML string or None on failure.
+    """
     try:
-        r = requests.get(URL, headers=headers, timeout=15)
-        r.raise_for_status()
-        return r.text
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+            )
+            page = context.new_page()
+
+            # Block images, fonts, media — we only need HTML
+            page.route("**/*", lambda route: route.abort()
+                if route.request.resource_type in ["image", "media", "font", "stylesheet"]
+                else route.continue_()
+            )
+
+            page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+
+            # Wait until at least one stock article is visible
+            page.wait_for_selector("article[aria-label]", timeout=15000)
+
+            html = page.content()
+            browser.close()
+            return html
+
+    except PlaywrightTimeout:
+        print("  [Fetch error] Page load timed out.")
+        return None
     except Exception as e:
         print(f"  [Fetch error] {e}")
         return None
@@ -28,7 +52,6 @@ def parse_weather(html: str) -> list[dict]:
     """
     Parses all active weather entries from the Weather Info section.
     Returns: [{"name": "🌧️ Rain"}, ...]
-    Name is taken directly from the page including any emoji.
     """
     soup     = BeautifulSoup(html, "html.parser")
     weathers = []
