@@ -1,5 +1,4 @@
 import re
-import asyncio
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 from config import URL, EXCLUDED_ITEMS, EXCLUDED_EVENT_KEYWORDS
@@ -8,12 +7,23 @@ from config import URL, EXCLUDED_ITEMS, EXCLUDED_EVENT_KEYWORDS
 def fetch_page() -> str | None:
     """
     Fetches the page HTML using a real headless Chromium browser.
-    Handles Cloudflare / captcha protection that blocks requests/urllib.
+    Configured for cloud deployment (Railway) with anti-detection args.
     Returns raw HTML string or None on failure.
     """
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-accelerated-2d-canvas",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled",
+                    "--window-size=1280,800",
+                ]
+            )
             context = browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -22,19 +32,37 @@ def fetch_page() -> str | None:
                 ),
                 viewport={"width": 1280, "height": 800},
                 locale="en-US",
+                timezone_id="Asia/Singapore",
+                # Mask headless signals
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                }
             )
+
+            # Hide navigator.webdriver flag
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
+
             page = context.new_page()
 
-            # Block images, fonts, media — we only need HTML
+            # Block images, fonts, media — only need HTML
             page.route("**/*", lambda route: route.abort()
                 if route.request.resource_type in ["image", "media", "font", "stylesheet"]
                 else route.continue_()
             )
 
-            page.goto(URL, wait_until="domcontentloaded", timeout=30000)
+            page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-            # Wait until at least one stock article is visible
-            page.wait_for_selector("article[aria-label]", timeout=15000)
+            # Wait until stock articles are present
+            try:
+                page.wait_for_selector("article[aria-label]", timeout=20000)
+            except PlaywrightTimeout:
+                # Articles didn't appear — grab whatever loaded
+                print("  [Fetch warn] Articles not found, grabbing partial HTML.")
 
             html = page.content()
             browser.close()
